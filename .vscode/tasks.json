@@ -1,0 +1,47 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Fusion: CI",
+            "type": "shell",
+            "command": "bun run ci",
+            "group": "build",
+            "problemMatcher": []
+        },
+        {
+            "label": "Fusion: tests",
+            "type": "shell",
+            "command": "bun run test:all",
+            "group": "test",
+            "problemMatcher": []
+        },
+        {
+            "label": "Fusion: tests node",
+            "type": "shell",
+            "command": "bun run test:node",
+            "group": "test",
+            "problemMatcher": []
+        },
+        {
+            "label": "Fusion: tests rust",
+            "type": "shell",
+            "command": "cargo test --locked",
+            "group": "test",
+            "problemMatcher": ["$rustc"]
+        },
+        {
+            "label": "Fusion: clippy",
+            "type": "shell",
+            "command": "cargo clippy --all-targets --all-features --locked -- -D warnings",
+            "group": "build",
+            "problemMatcher": ["$rustc"]
+        },
+        {
+            "label": "Fusion: fmt",
+            "type": "shell",
+            "command": "cargo fmt --all && bun run fmt",
+            "group": "build",
+            "problemMatcher": []
+        }
+    ]
+}
