@@ -1,0 +1,57 @@
+name: Release Integrity
+
+on:
+    push:
+        branches:
+            - main
+            - production
+        tags:
+            - "v*"
+    release:
+        types: [published]
+    workflow_dispatch:
+
+permissions:
+    contents: read
+
+concurrency:
+    group: fusion-release-${{ github.ref }}
+    cancel-in-progress: false
+
+jobs:
+    verify:
+        name: Version, artefactos y referencias
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v7
+              with:
+                  fetch-depth: 0
+                  ref: ${{ github.event.release.tag_name || github.ref }}
+
+            - name: Configurar Node
+              uses: actions/setup-node@v7
+              with:
+                  node-version: 24
+                  cache: npm
+
+            - name: Instalar dependencias
+              run: npm ci
+
+            - name: Validar contenido
+              run: npm run verify:release
+
+            - name: Validar referencias publicadas
+              if: startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/production' || github.event_name == 'release'
+              shell: bash
+              run: |
+                  git fetch origin main production --tags --force
+                  MAIN_SHA="$(git rev-parse origin/main)"
+                  PRODUCTION_SHA="$(git rev-parse origin/production)"
+                  test "$MAIN_SHA" = "$PRODUCTION_SHA"
+                  if git rev-parse 'v1.0.0^{}' >/dev/null 2>&1; then
+                    TAG_SHA="$(git rev-parse 'v1.0.0^{}')"
+                    test "$MAIN_SHA" = "$TAG_SHA"
+                  elif [[ "$GITHUB_REF" == refs/tags/* || "$GITHUB_EVENT_NAME" == release ]]; then
+                    exit 1
+                  fi
