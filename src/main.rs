@@ -9,6 +9,7 @@ mod fusion;
 mod ids;
 mod ledger;
 mod market;
+mod operations;
 mod operators;
 mod participants;
 mod risk;
@@ -31,6 +32,10 @@ pub use fusion::{CellConfig, LiquidityCell, ReceiptRecord};
 pub use ids::{AccountId, AssetId, CellId, Digest, PacketId, ReceiptId, TxId};
 pub use ledger::{AccountState, FusionLedger, JournalEntry, JournalOp};
 pub use market::{AssetConfig, OracleBook, PriceObservation, VenueConfig};
+pub use operations::{
+    CellLiquidityAssessment, CellLiquidityInput, LiquidityBand, LiquidityControlEngine,
+    LiquidityControlPolicy, LiquidityControlReport,
+};
 pub use operators::{OperatorRegistry, OperatorRole, ProtocolConfig};
 pub use participants::{
     Jurisdiction, ParticipantProfile, ParticipantStatus, ParticipantTier, ScreeningBook,

@@ -2,4 +2,5 @@ bun.lock
 node_modules/
 *.tsbuildinfo
 dist/
-package-lock.json
+target/
+tests/private/

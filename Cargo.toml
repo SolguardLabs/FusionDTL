@@ -1,9 +1,10 @@
 [package]
 name = "fusion_dtl"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2024"
 rust-version = "1.96"
 publish = false
+description = "Núcleo determinista de liquidación distribuida multi-celda"
 
 [dependencies]
 blake3 = "1.8.5"
