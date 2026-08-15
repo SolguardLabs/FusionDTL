@@ -1,85 +1,121 @@
-# Politica de Seguridad
+# Política de seguridad de FusionDTL
 
-Fusion DTL aplica una separacion estricta entre autorizacion, contabilidad,
-liquidacion y observabilidad. El objetivo es que cada transicion relevante sea
-verificable, reproducible y auditable a partir del journal canonico del libro.
+FusionDTL protege autorización, identidad, contabilidad y entrega mediante
+controles independientes. Esta política cubre el núcleo Rust, escenarios, SDK,
+scripts y configuración de publicación incluidos en el repositorio.
 
-## Alcance
+## Modelo de confianza
 
-Esta politica cubre:
-
-- el binario Rust `fusion_dtl`;
-- la logica del ledger y sus modulos de dominio;
-- los escenarios de runtime;
-- los tests Rust y JavaScript;
-- los scripts de CI;
-- la configuracion de GitHub Actions y Dependabot.
-
-No cubre integraciones externas, infraestructura no incluida en este
-repositorio ni despliegues personalizados.
-
-## Controles Principales
-
-El protocolo incorpora varios controles de defensa operativa:
-
-- Firmas Ed25519 para ordenes de recibo y paquetes de liquidacion.
-- Nonces independientes para recibos y paquetes.
-- Digests canonicos para identidades, recibos, rutas, transacciones y estado.
-- Validacion de roles antes de emitir o liquidar.
-- Perfiles activos de participantes con vencimiento por epoca.
-- Ventanas de liquidacion configurables.
-- Politicas de capacidad por celda.
-- Limites de riesgo por importe, comision y exposicion.
-- Verificacion de conservacion por activo despues de transiciones economicas.
-- Journal secuencial con digest de estado por entrada.
-
-## Gestion de Dependencias
-
-Las dependencias Rust se fijan con `Cargo.lock`. Las dependencias JavaScript se
-fijan con `bun.lock`. Dependabot revisa semanalmente:
-
-- crates de Cargo;
-- paquetes gestionados por Bun;
-- acciones de GitHub.
-
-Los cambios de dependencias deben pasar el pipeline completo antes de
-integrarse.
-
-## Validacion Requerida
-
-Antes de aceptar cambios se debe ejecutar:
-
-```bash
-bun run ci
+```mermaid
+flowchart TB
+    subgraph External["Entradas no confiables"]
+        Order["Orden de recibo"]
+        Packet["Paquete de settlement"]
+        Price["Observación de precio"]
+        Config["Configuración operativa"]
+    end
+    subgraph Validation["Frontera de validación"]
+        Identity["Firma e identidad"]
+        Authorization["Rol, perfil y nonce"]
+        Window["Ventana y época"]
+        Economic["Capacidad, comisión y reserva"]
+    end
+    subgraph State["Estado autorizado"]
+        Ledger["FusionLedger"]
+        Cells["Celdas"]
+        Journal["Journal + digest"]
+    end
+    Order --> Identity
+    Packet --> Identity
+    Config --> Authorization
+    Price --> Economic
+    Identity --> Authorization --> Window --> Economic --> Ledger
+    Ledger --> Cells
+    Ledger --> Journal
 ```
 
-Este comando cubre formato, lint, build y tests. Para validar solo la suite de
-regresion:
+Todas las entradas se validan antes de mutar el ledger. El proceso no administra
+claves externas, no abre puertos y no realiza llamadas de red. Custodia,
+persistencia, transporte y autenticación de servicios pertenecen a los
+adaptadores de despliegue.
 
-```bash
-bun run test:all
+## Controles de dominio
+
+- Firmas Ed25519 sobre bytes canónicos y separación por dominio.
+- Nonces independientes para emisión y settlement.
+- IDs tipados para cuentas, activos, celdas, recibos, paquetes y transacciones.
+- Perfiles activos con nivel, jurisdicción y vencimiento.
+- Roles explícitos para emisión, beneficio, relay, riesgo, tesorería y control.
+- Ventanas de settlement con época y tolerancias definidas.
+- Lanes con importe, comisión, vigencia y par de celdas autorizados.
+- Capacidad por celda y límites de exposición.
+- Aritmética monetaria comprobada sobre `u128`.
+- Conservación por activo y journal secuencial con digest de estado.
+- Evaluación preventiva de liquidez y concentración.
+
+## Matriz de riesgos
+
+| Superficie        | Riesgo operativo                    | Evidencia y control                      |
+| ----------------- | ----------------------------------- | ---------------------------------------- |
+| Identidad         | suplantación                        | clave pública, firma y bytes canónicos   |
+| Mensaje           | repetición o sustitución            | nonce, digest e ID derivado              |
+| Participante      | perfil vencido o rol incorrecto     | screening y `OperatorRegistry`           |
+| Ventana           | ejecución fuera de periodo          | `SettlementCalendar`                     |
+| Lane              | importe o comisión no autorizados   | política y quote de relayer              |
+| Celda             | reserva insuficiente                | capacidad, riesgo y operación comprobada |
+| Tesorería         | cobertura o concentración degradada | `LiquidityControlEngine`                 |
+| Cadena de entrega | referencia o artefacto divergente   | hashes, CI matricial y tag anotado       |
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant M as Monitor
+    participant L as Ledger
+    participant C as Control de liquidez
+    participant O as Operación
+    participant G as Gobierno
+    M->>L: reservas, pendientes y exposición
+    M->>C: escenario con haircuts y forecasts
+    C-->>M: banda + métricas por celda
+    alt healthy
+        M-->>O: mantener capacidad
+    else watch
+        M-->>O: reducir límites y reequilibrar
+    else restricted
+        M->>G: restringir admisión y reconciliar
+    else halted
+        M->>G: detener nuevas obligaciones
+    end
 ```
 
-## Comunicacion de Incidencias
+## Secretos y privacidad
 
-Los hallazgos sensibles deben comunicarse por un canal privado al equipo
-mantenedor antes de publicarse. El reporte debe incluir:
+No se deben confirmar semillas, claves privadas, tokens, credenciales, datos de
+clientes ni material de firma. Una integración debe usar un gestor de secretos,
+credenciales efímeras y permisos mínimos. Logs y métricas deben contener IDs y
+digests técnicos, nunca secretos ni payloads completos cuando incluyan datos
+regulados.
 
-- descripcion del comportamiento observado;
-- pasos de reproduccion;
-- impacto esperado sobre estado, saldos o permisos;
-- version o commit analizado;
-- salida relevante de comandos o tests.
+## Respuesta ante incidentes
 
-No se deben abrir issues publicos con detalles tecnicos que permitan reproducir
-un comportamiento no autorizado antes de que exista una revision coordinada.
+1. Detener la admisión en las lanes afectadas.
+2. Conservar commit, configuración, precios, journal y métricas.
+3. Inventariar recibos pendientes y paquetes procesados.
+4. Reconciliar balances, reservas, obligaciones y custodia por activo y celda.
+5. Delimitar el rango de épocas y transacciones afectado.
+6. Preparar corrección y pruebas de regresión con revisión independiente.
+7. Promover una versión nueva y reabrir capacidad de forma gradual.
 
-## Criterios de Aceptacion
+## Comunicación responsable
 
-Un cambio relacionado con seguridad operacional debe:
+Usa GitHub Security Advisories para comunicar información sensible de forma
+privada. Incluye commit, precondiciones, secuencia mínima reproducible, impacto,
+resultado observado, resultado esperado y propuesta de corrección. No publiques
+detalles operativos antes de que exista una actualización coordinada.
 
-- mantener la conservacion contable;
-- preservar la determinacion de digests;
-- incluir pruebas de regresion cuando cambie un flujo observable;
-- no reducir las validaciones existentes sin justificacion tecnica;
-- mantener verde el pipeline de CI.
+## Versiones admitidas
+
+| Versión | Estado                 |
+| ------- | ---------------------- |
+| `1.0.x` | mantenida              |
+| `<1.0`  | fuera de mantenimiento |
