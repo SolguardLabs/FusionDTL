@@ -1,51 +1,104 @@
-# Fusion DTL
+# FusionDTL
 
-![banner](./assets/banner.png)
+![Banner de FusionDTL](./assets/banner.png)
 
-Fusion DTL es un protocolo de liquidacion distribuida escrito en Rust. El
-proyecto modela un libro contable con celdas de liquidez, recibos de entrega,
-paquetes de liquidacion, operadores autorizados, ventanas operativas, politicas
-de capacidad y seguimiento de exposicion por ruta.
+FusionDTL es un núcleo de liquidación distribuida para obligaciones firmadas y
+reservas segmentadas en celdas. El protocolo coordina emisión de recibos,
+enrutamiento, pago, comisiones, ventanas operativas, límites de capacidad,
+exposición, tesorería y evidencia canónica dentro de un ledger determinista.
 
-El binario principal ejecuta escenarios deterministas y emite reportes JSON
-para validar la conservacion de saldos, el estado de las celdas y la superficie
-operativa del protocolo.
-
-## Objetivos del Protocolo
-
-- Registrar activos y cuentas con identidades derivadas criptograficamente.
-- Gestionar celdas de liquidez con reservas, obligaciones pendientes y limites
-  de capacidad.
-- Emitir recibos de entrega firmados por el emisor.
-- Liquidar paquetes firmados por el beneficiario a traves de rutas autorizadas.
-- Aplicar roles operativos para emisores, beneficiarios, relayers, tesoreria y
-  controladores de celda.
-- Mantener un journal canonico con digests de estado reproducibles.
-- Exponer escenarios ejecutables para auditoria funcional y regresion.
+La versión `1.0.0` incluye el motor Rust, cuatro escenarios reproducibles, un
+SDK local para Node.js, evaluación preventiva de liquidez y una cadena de
+publicación verificada en Linux y Windows.
 
 ## Arquitectura
 
-La logica esta organizada por dominios:
+```mermaid
+flowchart LR
+    Issuer["Emisor"] --> Receipt["Recibo firmado"]
+    Receipt --> Ledger["FusionLedger"]
+    Beneficiary["Beneficiario"] --> Packet["Paquete firmado"]
+    Packet --> Ledger
+    Registry["Roles y perfiles"] --> Ledger
+    Calendar["Ventana de settlement"] --> Ledger
+    Oracle["Precio y confianza"] --> Risk["RiskEngine"]
+    Capacity["Capacidad por celda"] --> Risk
+    Ledger --> Risk
+    Risk --> Cells["Celdas de liquidez"]
+    Cells --> Journal["Journal canónico"]
+```
 
-- `amount`: tipos de importe y basis points con operaciones comprobadas.
-- `codec`: serializacion canonica para hashes y firmas.
-- `crypto`: identidades publicas, claves y firmas Ed25519.
-- `delivery`: recibos de entrega y paquetes de liquidacion.
-- `fusion`: configuracion y estado de celdas de liquidez.
-- `ledger`: libro principal, cuentas, journal y transiciones de estado.
-- `market`: activos, venue y observaciones de precio.
-- `operators`: roles y configuracion operativa.
-- `participants`: perfiles de participantes y attestations internas.
-- `routing`: lanes de entrega y quotes de relayer.
-- `settlement`: calendario de ventanas de liquidacion.
-- `capacity`: politicas de capacidad por celda.
-- `risk`: evaluacion de limites de riesgo.
-- `treasury`: comisiones y reservas de cobertura.
-- `runtime`: CLI y escenarios reproducibles.
+Los dominios se mantienen separados: `delivery` define mensajes firmables,
+`routing` resuelve lanes y quotes, `fusion` representa celdas, `ledger` aplica
+transiciones y `codec` proporciona bytes canónicos para firmas y digests.
 
-## Escenarios Disponibles
+```mermaid
+sequenceDiagram
+    autonumber
+    participant I as Emisor
+    participant L as Ledger
+    participant C as Celda origen
+    participant B as Beneficiario
+    participant R as Relayer
+    I->>L: SignedReceiptOrder
+    L->>L: identidad, rol, nonce y ventana
+    L->>C: deposit + pending liability
+    L-->>I: ReceiptId + TxId
+    B->>L: SignedSettlementPacket
+    L->>L: firma, digest, lane, quote y riesgo
+    L->>C: pay delivery
+    L->>B: net amount
+    L->>R: relayer fee
+    L-->>B: TxId + journal entry
+```
 
-El binario acepta un nombre de escenario como argumento:
+## Identidad y evidencia
+
+Las órdenes usan firmas Ed25519. Los identificadores se derivan con dominios
+separados y serialización canónica. Cada transición económica añade una entrada
+al journal con el digest del estado resultante.
+
+```mermaid
+flowchart TD
+    Domain["Etiqueta de dominio"] --> Canonical["Bytes canónicos"]
+    Payload["Payload ordenado"] --> Canonical
+    Canonical --> Digest["BLAKE3 32 bytes"]
+    Digest --> ID["ID tipado"]
+    Canonical --> Signature["Firma Ed25519"]
+    Signature --> Verification["Verificación de identidad"]
+    ID --> Journal["Entrada de journal"]
+    Verification --> Journal
+```
+
+Los tipos `AccountId`, `AssetId`, `CellId`, `ReceiptId`, `PacketId` y `TxId`
+evitan mezclar identificadores en las interfaces. `Amount` encapsula `u128` y
+las operaciones financieras fallan ante desborde, sustracción inválida o
+división por cero.
+
+## Control de liquidez
+
+`LiquidityControlEngine` evalúa celdas sin modificar el ledger. Aplica haircut
+a reservas, recuperación parcial a entradas previstas y un factor de presión a
+salidas. Calcula cobertura, utilización, déficit y concentración, y clasifica
+el resultado como `healthy`, `watch`, `restricted` o `halted`.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Healthy
+    Healthy --> Watch: concentración o cobertura subobjetivo
+    Watch --> Healthy: capacidad restaurada
+    Watch --> Restricted: cobertura menor a 100%
+    Healthy --> Restricted: confianza insuficiente
+    Restricted --> Halted: cobertura menor al umbral de parada
+    Halted --> Restricted: recapitalización validada
+    Restricted --> Watch: confianza y cobertura recuperadas
+```
+
+La evaluación complementa los límites transaccionales de `RiskEngine`. Está
+pensada para planificación de ventanas, ajuste de capacidad y supervisión de
+tesorería.
+
+## Escenarios
 
 ```bash
 cargo run -- snapshot
@@ -54,61 +107,86 @@ cargo run -- settle
 cargo run -- rebalance
 ```
 
-Si no se indica escenario, se ejecuta `settle`.
+| Escenario   | Propósito                                           |
+| ----------- | --------------------------------------------------- |
+| `snapshot`  | superficie inicial, reservas, roles y configuración |
+| `issue`     | emisión firmada y creación de obligación pendiente  |
+| `settle`    | pago local, comisión y cierre de la obligación      |
+| `rebalance` | ruta entre celdas y movimiento operativo de reserva |
 
-Cada ejecucion devuelve un documento JSON con:
+Cada comando emite JSON con balances, estado de celdas, recibo, transacciones,
+contadores, digest y comprobación de conservación.
 
-- balances por participante;
-- reservas y obligaciones pendientes por celda;
-- recibo emitido, si aplica;
-- transacciones generadas por el flujo;
-- contadores de superficie operativa;
-- digest final de estado;
-- resultado de conservacion contable.
-
-## Desarrollo
+## Inicio rápido
 
 Requisitos:
 
-- Rust `1.96` o superior compatible con la edicion 2024.
-- Bun `1.3` o superior.
-
-Instalacion de dependencias JavaScript:
-
-```bash
-bun install --frozen-lockfile
-```
-
-Comandos principales:
+- Rust `1.96` o posterior, edición 2024;
+- Node.js 24 o posterior;
+- npm 11 o posterior.
 
 ```bash
-bun run build
-bun run check
-bun run test:rust
-bun run test:node
-bun run test:all
-bun run ci
+npm ci
+npm run build
+npm run test:all
+npm run ci
 ```
 
-Los tests JavaScript se ejecutan con Bun y validan la salida del binario Rust
-desde `tests/node`.
+Uso del SDK:
 
-## Calidad y CI
+```js
+const { FusionClient } = require("./sdk/client");
 
-El flujo de validacion ejecuta:
+const fusion = new FusionClient({ timeoutMs: 30_000 });
+const report = fusion.run("settle");
+const snapshot = fusion.snapshot("issue");
 
-- `cargo fmt --all -- --check`
-- `cargo clippy --all-targets --all-features --locked -- -D warnings`
-- `cargo build --all-targets --locked`
-- `cargo test --locked`
-- `bun test tests/node`
+console.log(report.state_digest);
+console.log(snapshot.pendingLiabilities);
+```
 
-GitHub Actions reproduce este flujo mediante `.github/workflows/ci.yml`.
-Dependabot mantiene actualizadas las dependencias de Cargo, Bun y GitHub
-Actions.
+El cliente ejecuta Cargo sin shell intermedio, limita tiempo y memoria de
+salida, propaga errores estructurados y valida el contrato JSON antes de
+devolver datos.
 
-## Estado del Repositorio
+## Módulos
 
-`Cargo.lock` y `bun.lock` forman parte del repositorio para que las ejecuciones
-locales y de CI sean reproducibles. Los directorios `target/` y `node_modules/`
-no se versionan.
+| Módulo         | Responsabilidad                          |
+| -------------- | ---------------------------------------- |
+| `amount`       | importes y puntos básicos comprobados    |
+| `codec`        | representación canónica                  |
+| `crypto`       | identidades y firmas Ed25519             |
+| `delivery`     | órdenes, recibos y paquetes              |
+| `fusion`       | configuración y estado de celdas         |
+| `ledger`       | cuentas, transiciones y journal          |
+| `market`       | activos, venue y observaciones de precio |
+| `operators`    | roles y configuración de protocolo       |
+| `participants` | perfiles, nivel, jurisdicción y vigencia |
+| `routing`      | lanes y quotes de relayer                |
+| `settlement`   | ventanas operativas                      |
+| `capacity`     | límites por celda y activo               |
+| `risk`         | autorización transaccional               |
+| `treasury`     | comisiones y reserva de cobertura        |
+| `operations`   | estrés agregado de liquidez              |
+| `sdk`          | integración local para Node.js           |
+
+## Documentación
+
+- [Arquitectura](./docs/arquitectura.md)
+- [Modelo económico](./docs/modelo-economico.md)
+- [Recibos y settlement](./docs/recibos-y-settlement.md)
+- [Criptografía e identidad](./docs/criptografia-e-identidad.md)
+- [Seguridad operativa](./docs/seguridad-operativa.md)
+- [Integración](./docs/integracion.md)
+- [Despliegue](./docs/despliegue.md)
+- [Política de seguridad](./SECURITY.md)
+
+## Publicación
+
+Una publicación aceptada mantiene `main`, `production` y el commit pelado del
+tag anotado `v1.0.0` en el mismo SHA. La release asociada se denomina
+`Production 1.0.0` y ejecuta una comprobación de integridad posterior.
+
+## Licencia
+
+Consulta [LICENSE](./LICENSE).

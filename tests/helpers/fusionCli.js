@@ -14,8 +14,15 @@ function runScenario(name) {
     const result = spawnSync("cargo", args, {
         cwd: repoRoot,
         encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 30_000,
+        maxBuffer: 4 * 1024 * 1024,
+        windowsHide: true,
     });
 
+    if (result.error) {
+        throw result.error;
+    }
     if (result.status !== 0) {
         throw new Error(
             [
